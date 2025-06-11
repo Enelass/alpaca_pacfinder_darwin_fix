@@ -1,150 +1,71 @@
-# Alpaca PAC Finder Darwin Fix Analysis
+# Alpaca PAC Finder Darwin Fix
 
-This document analyzes the changes made to the `pacfinder_darwin.go` file in the PR fix.
+This repository contains a fix for the PAC (Proxy Auto-Configuration) detection issue on macOS when PAC is set via JAMF or other Managed Profile / MDM solutions.
 
-## Changes Between BeforePR and AfterPR Versions
+## The Issue
 
-### 1. Improved Error Handling and Logging
+Alpaca may fail to detect PAC URLs on macOS systems where the PAC configuration is set by JAMF or other MDM solutions through the `scutil --proxy` mechanism. This results in Alpaca reporting:
 
-**Before:**
-- Minimal error handling
-- No logging when SCDynamicStore creation fails
-- No validation of CFNumberGetValue return values
-
-**After:**
-- Added proper error handling with log.Fatalf when SCDynamicStore creation fails
-- Added validation of CFNumberGetValue return values
-- Structured the code with better error handling throughout
-
-### 2. Added Redundant PAC URL Detection Methods
-
-**Before:**
-- Single method for PAC URL detection using SCDynamicStoreCopyValue
-
-**After:**
-- Two methods for PAC URL detection:
-  1. Original method using SCDynamicStoreCopyValue
-  2. New method using SCDynamicStoreCopyProxies
-- Fallback mechanism: if the first method fails, the second is tried
-
-### 3. Code Structure Improvements
-
-**Before:**
-- Single monolithic function for PAC URL detection
-- Limited comments and documentation
-
-**After:**
-- Split functionality into separate methods with clear responsibilities
-- Better function naming (getPACUrlFromSCDynamicStoreCopyValue, getPACUrlFromSCDynamicStoreCopyProxies)
-- Added commented logging statements (currently disabled) for debugging
-
-### 4. Added Helper Function
-
-**Before:**
-- No helper function for creating CFStringRef from Go strings
-
-**After:**
-- Added CFStringCreateWithCString helper function to create CFStringRef from Go strings
-- This improves code readability and maintainability
-
-### 5. Added Auto Flag to pacFinder struct
-
-**Before:**
-```go
-type pacFinder struct {
-    pacUrl   string
-    storeRef C.SCDynamicStoreRef
-}
-```
-
-**After:**
-```go
-type pacFinder struct {
-    pacUrl   string
-    storeRef C.SCDynamicStoreRef
-    auto     bool
-}
-```
-
-The `auto` flag indicates whether the PAC URL is automatically detected or manually specified.
-
-## Visual Evidence of the Fix
-
-![PR Fix Results](PR%20pacfinder_darwin%20fix.png)
-
-This image shows:
-
-### Before the PR
-The system was unable to detect PAC URLs properly, showing:
 ```
 No PAC URL specified or detected; all requests will be made directly
 ```
 
-### After the PR
-The system successfully detects and uses the PAC URL:
-```
-Attempting to download PAC from http://pac.[domain].pac
-```
+Even though the PAC URL is properly configured in the system.
 
-The `scutil --proxy` command output shows that the PAC configuration is available in the system:
-```
-ProxyAutoConfigEnable : 1
-ProxyAutoConfigURLString : http://pac.[domain].pac
-```
+## The Solution
 
-## Technical Implementation Details
+This fork adds a redundant PAC URL detection method for macOS that uses `SCDynamicStoreCopyProxies` as a fallback when the original method using `SCDynamicStoreCopyValue` fails. This ensures that PAC URLs are properly detected across various macOS environments and configurations.
 
-### Original Implementation Issues
+![PAC Detection Fix](PR%20pacfinder_darwin%20fix.png)
 
-The original implementation had several limitations:
+## Usage Instructions
 
-1. **Single Point of Failure**: It relied solely on SCDynamicStoreCopyValue with a specific key to retrieve proxy settings
-2. **No Fallback Mechanism**: If the primary method failed, there was no alternative way to retrieve the PAC URL
-3. **Limited Error Handling**: The code didn't properly check return values or handle error conditions
-4. **Lack of Debugging Information**: No logging to help diagnose issues in production
+### For macOS Users with PAC Detection Issues
 
-### PR Fix Implementation
+If you're experiencing issues with Alpaca not detecting your PAC URL on macOS, especially when it's set by JAMF or another MDM solution, you have two options:
 
-The PR fix addressed these issues by:
+#### Option 1: Use the Pre-built Binary
 
-1. **Multiple Detection Methods**: Implementing two separate methods to retrieve the PAC URL
-2. **Improved Error Handling**: Adding proper validation of return values and error logging
-3. **Better Code Organization**: Splitting functionality into separate methods with clear responsibilities
-4. **Enhanced Debugging**: Adding (commented) logging statements that can be enabled for troubleshooting
+1. Download the pre-built `alpaca` binary from this repository
+2. Make it executable: `chmod +x alpaca`
+3. Run it: `./alpaca`
 
-### Key Code Improvements
+#### Option 2: Build from Source
 
-1. **Error Handling for Store Creation**:
-   ```go
-   storeRef := C.SCDynamicStoreCreate_trampoline()
-   if storeRef == 0 {
-       log.Fatalf("Failed to create SCDynamicStore")
-   }
+1. Clone this repository:
+   ```
+   git clone https://github.com/enelass/alpaca_pacfinder_darwin_fix.git
+   cd alpaca_pacfinder_darwin_fix
    ```
 
-2. **Validation of CFNumberGetValue**:
-   ```go
-   if C.CFNumberGetValue(pacEnabled, C.kCFNumberIntType, unsafe.Pointer(&enabled)) == 0 {
-       // log.Printf("Could not retrieve value of PAC enabled flag using SCDynamicStoreCopyValue")
-       return ""
-   }
+2. Build the binary:
+   ```
+   go build
    ```
 
-3. **New Helper Function**:
-   ```go
-   func CFStringCreateWithCString(s string) C.CFStringRef {
-       cs := C.CString(s)
-       defer C.free(unsafe.Pointer(cs))
-       return C.CFStringCreateWithCString(C.kCFAllocatorDefault, cs, C.kCFStringEncodingUTF8)
-   }
+3. Run the resulting binary:
+   ```
+   ./alpaca
    ```
 
-## Conclusion
+## Important Notes
 
-The PR significantly improved the PAC URL detection by:
+- This fork is solely focused on fixing the PAC detection issue on macOS. It does not address similar issues on Windows or other UNIX systems.
+- Once [PR #147](https://github.com/samuong/alpaca/pull/147) is approved and merged into the official repository, we recommend using the official Alpaca repository to benefit from other bug fixes and feature improvements.
 
-1. Adding a redundant detection method for better reliability
-2. Improving error handling and code structure
-3. Making the code more robust against different system configurations
+## Technical Details
 
-These changes ensure that the PAC URL is properly detected across various macOS environments and configurations, making the application more reliable for all users.
+The fix implements two separate methods to retrieve the PAC URL:
+
+1. Original method using `SCDynamicStoreCopyValue` with a specific key
+2. New method using `SCDynamicStoreCopyProxies`
+
+If the first method fails, the second method is tried as a fallback. This ensures that PAC URLs are properly detected regardless of how they were configured in the system.
+
+## Original Alpaca Documentation
+
+For more information about Alpaca and its features, please refer to the [official Alpaca repository](https://github.com/samuong/alpaca).
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
